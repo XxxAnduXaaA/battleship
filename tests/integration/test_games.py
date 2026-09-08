@@ -1,0 +1,331 @@
+from uuid import UUID
+
+import pytest
+
+from app.models import Game
+
+
+def create_game(client):
+    response = client.post("/games")
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    return data["session_id"]
+
+
+def test_create_game(client, db):
+    response = client.post("/games")
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    # API вернул корректный session_id
+    session_id = data["session_id"]
+    UUID(session_id)
+
+    # API вернул флот
+    assert len(data["ships"]) == 10
+
+    # Игра реально сохранилась в БД
+    game = db.get(Game, session_id)
+
+    assert game is not None
+    assert game.session_id == session_id
+    assert game.ships == data["ships"]
+
+    assert game.received_shots == []
+    assert game.own_shots == {}
+    assert game.pending_shot is None
+    assert game.closed is False
+
+
+def test_get_shot(client, db):
+    session_id = create_game(client)
+
+    response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert response.status_code == 200
+
+    coordinate = response.json()["coordinate"]
+
+    # Проверяем, что pending_shot сохранился в БД
+    game = db.get(Game, session_id)
+
+    assert game.pending_shot == coordinate
+
+
+def test_cannot_get_next_shot_before_result(client):
+    session_id = create_game(client)
+
+    first_response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert second_response.status_code == 400
+    assert second_response.json()["detail"] == (
+        "Previous shot result has not been received"
+    )
+
+
+def test_submit_shot_result(client, db):
+    session_id = create_game(client)
+
+    shot_response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert shot_response.status_code == 200
+
+    coordinate = shot_response.json()["coordinate"]
+
+    result_response = client.post(
+        f"/games/{session_id}/shot/result",
+        json={
+            "result": "miss"
+        },
+    )
+
+    assert result_response.status_code == 200
+    assert result_response.json() == {
+        "status": "accepted"
+    }
+
+    # Проверяем изменения в БД
+    game = db.get(Game, session_id)
+
+    assert game.pending_shot is None
+    assert game.own_shots == {
+        coordinate: "miss"
+    }
+
+
+def test_cannot_submit_result_without_shot(client):
+    session_id = create_game(client)
+
+    response = client.post(
+        f"/games/{session_id}/shot/result",
+        json={
+            "result": "miss"
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "No shot is awaiting a result"
+
+
+def test_opponent_shot_miss(client, db):
+    session_id = create_game(client)
+
+    response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": "J10"
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "result": "miss"
+    }
+
+    game = db.get(Game, session_id)
+
+    assert game.received_shots == ["J10"]
+
+
+def test_opponent_shot_hit(client, db):
+    session_id = create_game(client)
+
+    response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": "A1"
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "result": "hit"
+    }
+
+    game = db.get(Game, session_id)
+
+    assert game.received_shots == ["A1"]
+
+
+def test_opponent_shot_killed(client):
+    session_id = create_game(client)
+
+    # В standard_ships A1-A4 — один корабль.
+    for coordinate in ["A1", "A2", "A3"]:
+        response = client.post(
+            f"/games/{session_id}/opponent-shot",
+            json={
+                "coordinate": coordinate
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"] == "hit"
+
+    response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": "A4"
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"] == "killed"
+
+
+def test_cannot_shoot_same_coordinate_twice(client):
+    session_id = create_game(client)
+
+    first_response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": "J10"
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": "J10"
+        },
+    )
+
+    assert second_response.status_code == 400
+
+
+def test_game_not_found(client):
+    session_id = "00000000-0000-0000-0000-000000000000"
+
+    response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    [
+        "A0",
+        "A11",
+        "K1",
+        "Z99",
+        "",
+        "AA1",
+        "1A",
+    ],
+)
+def test_invalid_opponent_shot_coordinate(client, coordinate):
+    session_id = create_game(client)
+
+    response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": coordinate
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_invalid_shot_result(client):
+    session_id = create_game(client)
+
+    shot_response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert shot_response.status_code == 200
+
+    response = client.post(
+        f"/games/{session_id}/shot/result",
+        json={
+            "result": "destroyed"
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_close_game(client, db):
+    session_id = create_game(client)
+
+    response = client.post(
+        f"/games/{session_id}/close"
+    )
+
+    assert response.status_code == 200
+
+    game = db.get(Game, session_id)
+
+    assert game.closed is True
+
+
+def test_cannot_close_game_twice(client):
+    session_id = create_game(client)
+
+    first_response = client.post(
+        f"/games/{session_id}/close"
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        f"/games/{session_id}/close"
+    )
+
+    assert second_response.status_code == 400
+
+
+def test_cannot_get_shot_after_game_closed(client):
+    session_id = create_game(client)
+
+    close_response = client.post(
+        f"/games/{session_id}/close"
+    )
+
+    assert close_response.status_code == 200
+
+    response = client.post(
+        f"/games/{session_id}/shot"
+    )
+
+    assert response.status_code == 400
+
+
+def test_cannot_receive_opponent_shot_after_game_closed(client):
+    session_id = create_game(client)
+
+    close_response = client.post(
+        f"/games/{session_id}/close"
+    )
+
+    assert close_response.status_code == 200
+
+    response = client.post(
+        f"/games/{session_id}/opponent-shot",
+        json={
+            "coordinate": "J10"
+        },
+    )
+
+    assert response.status_code == 400
