@@ -52,7 +52,7 @@ class Arena:
         return payload
 
     async def start(self, player: Player) -> None:
-        body = await self.request(player, "POST", "/games")
+        body = await self.request(player, "POST", "/game")
         try:
             player.session_id = str(UUID(body["session_id"]))
             player.ships = body["ships"]
@@ -61,7 +61,7 @@ class Arena:
             raise TechnicalDefeat(player.name, f"invalid starting position: {error}")
 
     async def get_shot(self, player: Player) -> str:
-        body = await self.request(player, "POST", f"/games/{player.session_id}/shot")
+        body = await self.request(player, "POST", f"/game/{player.session_id}/shot")
         try:
             target = body["coordinate"]
             parse_coordinate(target)
@@ -73,7 +73,7 @@ class Arena:
         return target
 
     async def defend(self, defender: Player, coordinate: str) -> str:
-        body = await self.request(defender, "POST", f"/games/{defender.session_id}/opponent-shot", json={"coordinate": coordinate})
+        body = await self.request(defender, "POST", f"/game/{defender.session_id}/opponent-shot", json={"coordinate": coordinate})
         result = body.get("result")
         if result not in RESULTS:
             raise TechnicalDefeat(defender.name, "invalid opponent-shot result")
@@ -84,7 +84,7 @@ class Arena:
         return result
 
     async def submit_result(self, player: Player, result: str) -> None:
-        body = await self.request(player, "POST", f"/games/{player.session_id}/shot/result", json={"result": result})
+        body = await self.request(player, "POST", f"/game/{player.session_id}/shot/result", json={"result": result})
         if body != {"status": "accepted"}:
             raise TechnicalDefeat(player.name, "shot result was not accepted")
 
@@ -92,7 +92,7 @@ class Arena:
         for player in self.players:
             if player.session_id:
                 try:
-                    await self.client.post(f"{player.base_url}/games/{player.session_id}/close")
+                    await self.client.post(f"{player.base_url}/game/{player.session_id}/close")
                 except httpx.HTTPError:
                     pass
         await self.client.aclose()

@@ -6,7 +6,7 @@ from app.models import Game
 
 
 def create_game(client):
-    response = client.post("/games")
+    response = client.post("/game")
 
     assert response.status_code == 201
 
@@ -16,7 +16,7 @@ def create_game(client):
 
 
 def test_create_game(client, db):
-    response = client.post("/games")
+    response = client.post("/game")
 
     assert response.status_code == 201
 
@@ -46,7 +46,7 @@ def test_get_shot(client, db):
     session_id = create_game(client)
 
     response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
     )
 
     assert response.status_code == 200
@@ -63,16 +63,16 @@ def test_cannot_get_next_shot_before_result(client):
     session_id = create_game(client)
 
     first_response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
     )
 
     assert first_response.status_code == 200
 
     second_response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
     )
 
-    assert second_response.status_code == 400
+    assert second_response.status_code == 409
     assert second_response.json()["detail"] == (
         "Previous shot result has not been received"
     )
@@ -82,7 +82,7 @@ def test_submit_shot_result(client, db):
     session_id = create_game(client)
 
     shot_response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
     )
 
     assert shot_response.status_code == 200
@@ -90,7 +90,7 @@ def test_submit_shot_result(client, db):
     coordinate = shot_response.json()["coordinate"]
 
     result_response = client.post(
-        f"/games/{session_id}/shot/result",
+        f"/game/{session_id}/shot/result",
         json={
             "result": "miss"
         },
@@ -114,13 +114,13 @@ def test_cannot_submit_result_without_shot(client):
     session_id = create_game(client)
 
     response = client.post(
-        f"/games/{session_id}/shot/result",
+        f"/game/{session_id}/shot/result",
         json={
             "result": "miss"
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert response.json()["detail"] == "No shot is awaiting a result"
 
 
@@ -128,7 +128,7 @@ def test_opponent_shot_miss(client, db):
     session_id = create_game(client)
 
     response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": "J10"
         },
@@ -148,7 +148,7 @@ def test_opponent_shot_hit(client, db):
     session_id = create_game(client)
 
     response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": "A1"
         },
@@ -170,7 +170,7 @@ def test_opponent_shot_killed(client):
     # В standard_ships A1-A4 — один корабль.
     for coordinate in ["A1", "A2", "A3"]:
         response = client.post(
-            f"/games/{session_id}/opponent-shot",
+            f"/game/{session_id}/opponent-shot",
             json={
                 "coordinate": coordinate
             },
@@ -180,7 +180,7 @@ def test_opponent_shot_killed(client):
         assert response.json()["result"] == "hit"
 
     response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": "A4"
         },
@@ -194,7 +194,7 @@ def test_cannot_shoot_same_coordinate_twice(client):
     session_id = create_game(client)
 
     first_response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": "J10"
         },
@@ -203,7 +203,7 @@ def test_cannot_shoot_same_coordinate_twice(client):
     assert first_response.status_code == 200
 
     second_response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": "J10"
         },
@@ -216,7 +216,43 @@ def test_game_not_found(client):
     session_id = "00000000-0000-0000-0000-000000000000"
 
     response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
+    )
+
+    assert response.status_code == 404
+
+
+def test_shot_result_game_not_found(client):
+    session_id = "00000000-0000-0000-0000-000000000000"
+
+    response = client.post(
+        f"/game/{session_id}/shot/result",
+        json={
+            "result": "miss"
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_opponent_shot_game_not_found(client):
+    session_id = "00000000-0000-0000-0000-000000000000"
+
+    response = client.post(
+        f"/game/{session_id}/opponent-shot",
+        json={
+            "coordinate": "J10"
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_close_game_not_found(client):
+    session_id = "00000000-0000-0000-0000-000000000000"
+
+    response = client.post(
+        f"/game/{session_id}/close"
     )
 
     assert response.status_code == 404
@@ -238,7 +274,7 @@ def test_invalid_opponent_shot_coordinate(client, coordinate):
     session_id = create_game(client)
 
     response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": coordinate
         },
@@ -251,26 +287,26 @@ def test_invalid_shot_result(client):
     session_id = create_game(client)
 
     shot_response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
     )
 
     assert shot_response.status_code == 200
 
     response = client.post(
-        f"/games/{session_id}/shot/result",
+        f"/game/{session_id}/shot/result",
         json={
             "result": "destroyed"
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 def test_close_game(client, db):
     session_id = create_game(client)
 
     response = client.post(
-        f"/games/{session_id}/close"
+        f"/game/{session_id}/close"
     )
 
     assert response.status_code == 200
@@ -284,13 +320,13 @@ def test_cannot_close_game_twice(client):
     session_id = create_game(client)
 
     first_response = client.post(
-        f"/games/{session_id}/close"
+        f"/game/{session_id}/close"
     )
 
     assert first_response.status_code == 200
 
     second_response = client.post(
-        f"/games/{session_id}/close"
+        f"/game/{session_id}/close"
     )
 
     assert second_response.status_code == 400
@@ -300,32 +336,51 @@ def test_cannot_get_shot_after_game_closed(client):
     session_id = create_game(client)
 
     close_response = client.post(
-        f"/games/{session_id}/close"
+        f"/game/{session_id}/close"
     )
 
     assert close_response.status_code == 200
 
     response = client.post(
-        f"/games/{session_id}/shot"
+        f"/game/{session_id}/shot"
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 410
+
+
+def test_cannot_submit_result_after_game_closed(client):
+    session_id = create_game(client)
+
+    close_response = client.post(
+        f"/game/{session_id}/close"
+    )
+
+    assert close_response.status_code == 200
+
+    response = client.post(
+        f"/game/{session_id}/shot/result",
+        json={
+            "result": "miss"
+        },
+    )
+
+    assert response.status_code == 410
 
 
 def test_cannot_receive_opponent_shot_after_game_closed(client):
     session_id = create_game(client)
 
     close_response = client.post(
-        f"/games/{session_id}/close"
+        f"/game/{session_id}/close"
     )
 
     assert close_response.status_code == 200
 
     response = client.post(
-        f"/games/{session_id}/opponent-shot",
+        f"/game/{session_id}/opponent-shot",
         json={
             "coordinate": "J10"
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 410
