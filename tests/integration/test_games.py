@@ -2,6 +2,7 @@ from uuid import UUID
 
 import pytest
 
+from app.game import ALL_COORDINATES
 from app.models import Game
 
 
@@ -12,7 +13,7 @@ def create_game(client):
 
     data = response.json()
 
-    return data["session_id"]
+    return data["session_id"], data["ships"]
 
 
 def test_create_game(client, db):
@@ -43,7 +44,7 @@ def test_create_game(client, db):
 
 
 def test_get_shot(client, db):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     response = client.post(
         f"/game/{session_id}/shot"
@@ -60,7 +61,7 @@ def test_get_shot(client, db):
 
 
 def test_cannot_get_next_shot_before_result(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     first_response = client.post(
         f"/game/{session_id}/shot"
@@ -79,7 +80,7 @@ def test_cannot_get_next_shot_before_result(client):
 
 
 def test_submit_shot_result(client, db):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     shot_response = client.post(
         f"/game/{session_id}/shot"
@@ -111,7 +112,7 @@ def test_submit_shot_result(client, db):
 
 
 def test_cannot_submit_result_without_shot(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     response = client.post(
         f"/game/{session_id}/shot/result",
@@ -125,12 +126,15 @@ def test_cannot_submit_result_without_shot(client):
 
 
 def test_opponent_shot_miss(client, db):
-    session_id = create_game(client)
+    session_id, ships = create_game(client)
+
+    occupied = {cell for ship in ships for cell in ship["coordinates"]}
+    target = next(coord for coord in ALL_COORDINATES if coord not in occupied)
 
     response = client.post(
         f"/game/{session_id}/opponent-shot",
         json={
-            "coordinate": "J10"
+            "coordinate": target
         },
     )
 
@@ -141,16 +145,19 @@ def test_opponent_shot_miss(client, db):
 
     game = db.get(Game, session_id)
 
-    assert game.received_shots == ["J10"]
+    assert game.received_shots == [target]
 
 
 def test_opponent_shot_hit(client, db):
-    session_id = create_game(client)
+    session_id, ships = create_game(client)
+
+    # Берём клетку корабля длиннее одной палубы, чтобы один выстрел давал "hit", а не "killed".
+    target = next(ship for ship in ships if len(ship["coordinates"]) > 1)["coordinates"][0]
 
     response = client.post(
         f"/game/{session_id}/opponent-shot",
         json={
-            "coordinate": "A1"
+            "coordinate": target
         },
     )
 
@@ -161,14 +168,17 @@ def test_opponent_shot_hit(client, db):
 
     game = db.get(Game, session_id)
 
-    assert game.received_shots == ["A1"]
+    assert game.received_shots == [target]
 
 
 def test_opponent_shot_killed(client):
-    session_id = create_game(client)
+    session_id, ships = create_game(client)
 
-    # В standard_ships A1-A4 — один корабль.
-    for coordinate in ["A1", "A2", "A3"]:
+    # Расстановка случайная (standard_ships), поэтому берём реальные клетки самого длинного корабля.
+    target_ship = max(ships, key=lambda ship: len(ship["coordinates"]))
+    coordinates = target_ship["coordinates"]
+
+    for coordinate in coordinates[:-1]:
         response = client.post(
             f"/game/{session_id}/opponent-shot",
             json={
@@ -182,7 +192,7 @@ def test_opponent_shot_killed(client):
     response = client.post(
         f"/game/{session_id}/opponent-shot",
         json={
-            "coordinate": "A4"
+            "coordinate": coordinates[-1]
         },
     )
 
@@ -191,7 +201,7 @@ def test_opponent_shot_killed(client):
 
 
 def test_cannot_shoot_same_coordinate_twice(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     first_response = client.post(
         f"/game/{session_id}/opponent-shot",
@@ -271,7 +281,7 @@ def test_close_game_not_found(client):
     ],
 )
 def test_invalid_opponent_shot_coordinate(client, coordinate):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     response = client.post(
         f"/game/{session_id}/opponent-shot",
@@ -284,7 +294,7 @@ def test_invalid_opponent_shot_coordinate(client, coordinate):
 
 
 def test_invalid_shot_result(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     shot_response = client.post(
         f"/game/{session_id}/shot"
@@ -303,7 +313,7 @@ def test_invalid_shot_result(client):
 
 
 def test_close_game(client, db):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     response = client.post(
         f"/game/{session_id}/close"
@@ -317,7 +327,7 @@ def test_close_game(client, db):
 
 
 def test_cannot_close_game_twice(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     first_response = client.post(
         f"/game/{session_id}/close"
@@ -333,7 +343,7 @@ def test_cannot_close_game_twice(client):
 
 
 def test_cannot_get_shot_after_game_closed(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     close_response = client.post(
         f"/game/{session_id}/close"
@@ -349,7 +359,7 @@ def test_cannot_get_shot_after_game_closed(client):
 
 
 def test_cannot_submit_result_after_game_closed(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     close_response = client.post(
         f"/game/{session_id}/close"
@@ -368,7 +378,7 @@ def test_cannot_submit_result_after_game_closed(client):
 
 
 def test_cannot_receive_opponent_shot_after_game_closed(client):
-    session_id = create_game(client)
+    session_id, _ = create_game(client)
 
     close_response = client.post(
         f"/game/{session_id}/close"
