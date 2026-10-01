@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -49,13 +50,40 @@ def validate_ships(ships: list[dict]) -> None:
 
 
 def standard_ships() -> list[dict[str, list[str]]]:
-    # Fixed legal layout; replace this function to experiment with another placement tactic.
-    return [
-        {"coordinates": ["A1", "A2", "A3", "A4"]},
-        {"coordinates": ["C1", "D1", "E1"]}, {"coordinates": ["C3", "C4", "C5"]},
-        {"coordinates": ["E3", "F3"]}, {"coordinates": ["E5", "F5"]}, {"coordinates": ["H1", "H2"]},
-        {"coordinates": ["H4"]}, {"coordinates": ["H7"]}, {"coordinates": ["J1"]}, {"coordinates": ["J4"]},
-    ]
+    """Randomly place the standard fleet, restarting from scratch whenever a ship can't be fit."""
+    while True:
+        try:
+            return _random_ships()
+        except ValueError:
+            continue
+
+
+
+def _random_ships() -> list[dict[str, list[str]]]:
+    occupied: set[tuple[int, int]] = set()
+    ships = []
+    for size in FLEET:
+        cells = _place_ship(size, occupied)
+        occupied.update(cells)
+        ships.append({"coordinates": [coordinate(*cell) for cell in cells]})
+    return ships
+
+
+def _place_ship(size: int, occupied: set[tuple[int, int]], attempts: int = 200) -> list[tuple[int, int]]:
+    for _ in range(attempts):
+        if random.choice((True, False)):
+            col, row = random.randint(0, BOARD_SIZE - size), random.randint(0, BOARD_SIZE - 1)
+            cells = [(col + i, row) for i in range(size)]
+        else:
+            col, row = random.randint(0, BOARD_SIZE - 1), random.randint(0, BOARD_SIZE - size)
+            cells = [(col, row + i) for i in range(size)]
+        if _fits(cells, occupied):
+            return cells
+    raise ValueError("Could not place a ship without collisions")
+
+
+def _fits(cells: list[tuple[int, int]], occupied: set[tuple[int, int]]) -> bool:
+    return all((cell[0] + dx, cell[1] + dy) not in occupied for cell in cells for dx in (-1, 0, 1) for dy in (-1, 0, 1))
 
 
 def next_shot(known: dict[str, str]) -> str:

@@ -23,7 +23,7 @@ app = FastAPI(title="Battleship service", lifespan=lifespan)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(_: Request, error: RequestValidationError):
-    return JSONResponse(status_code=422, content={"detail": error.errors()[0]["msg"]})
+    return JSONResponse(status_code=400, content={"detail": error.errors()[0]["msg"]})
 
 
 class Ship(BaseModel):
@@ -66,16 +66,16 @@ def db_session():
         db.close()
 
 
-def get_game(session_id: UUID, db: Session) -> Game:
-    game = db.get(Game, str(session_id))
+def get_game(session_id: str, db: Session) -> Game:
+    game = db.get(Game, session_id)
     if not game:
         raise HTTPException(404, "Game session not found")
     if game.closed:
-        raise HTTPException(400, "Game session is closed")
+        raise HTTPException(410, "Game session is closed")
     return game
 
 
-@app.post("/games", response_model=StartResponse, status_code=201)
+@app.post("/game", response_model=StartResponse, status_code=201)
 def start_game(db: Session = Depends(db_session)):
     ships = standard_ships()
     validate_ships(ships)
@@ -85,25 +85,25 @@ def start_game(db: Session = Depends(db_session)):
     return {"session_id": game.session_id, "ships": ships}
 
 
-@app.post("/games/{session_id}/shot", response_model=CoordinateResponse)
-def make_shot(session_id: UUID, db: Session = Depends(db_session)):
+@app.post("/game/{session_id}/shot", response_model=CoordinateResponse)
+def make_shot(session_id: str, db: Session = Depends(db_session)):
     game = get_game(session_id, db)
     if game.pending_shot:
-        raise HTTPException(400, "Previous shot result has not been received")
+        raise HTTPException(409, "Previous shot result has not been received")
     try:
         target = next_shot(game.own_shots)
     except StopIteration:
-        raise HTTPException(400, "No available cells remain")
+        raise HTTPException(409, "No available cells remain")
     game.pending_shot = target
     db.commit()
     return {"coordinate": target}
 
 
-@app.post("/games/{session_id}/shot/result", response_model=StatusResponse)
-def accept_result(session_id: UUID, body: ResultRequest, db: Session = Depends(db_session)):
+@app.post("/game/{session_id}/shot/result", response_model=StatusResponse)
+def accept_result(session_id: str, body: ResultRequest, db: Session = Depends(db_session)):
     game = get_game(session_id, db)
     if not game.pending_shot:
-        raise HTTPException(400, "No shot is awaiting a result")
+        raise HTTPException(409, "No shot is awaiting a result")
     own_shots = dict(game.own_shots)
     own_shots[game.pending_shot] = body.result
     game.own_shots = own_shots
@@ -112,8 +112,8 @@ def accept_result(session_id: UUID, body: ResultRequest, db: Session = Depends(d
     return {"status": "accepted"}
 
 
-@app.post("/games/{session_id}/opponent-shot", response_model=ResultResponse)
-def opponent_shot(session_id: UUID, body: CoordinateRequest, db: Session = Depends(db_session)):
+@app.post("/game/{session_id}/opponent-shot", response_model=ResultResponse)
+def opponent_shot(session_id: str, body: CoordinateRequest, db: Session = Depends(db_session)):
     game = get_game(session_id, db)
     try:
         from .game import parse_coordinate
@@ -130,9 +130,9 @@ def opponent_shot(session_id: UUID, body: CoordinateRequest, db: Session = Depen
     return {"result": result}
 
 
-@app.post("/games/{session_id}/close", response_model=StatusResponse)
-def close_game(session_id: UUID, db: Session = Depends(db_session)):
-    game = db.get(Game, str(session_id))
+@app.post("/game/{session_id}/close", response_model=StatusResponse)
+def close_game(session_id: str, db: Session = Depends(db_session)):
+    game = db.get(Game, session_id)
     if not game:
         raise HTTPException(404, "Game session not found")
     if game.closed:
