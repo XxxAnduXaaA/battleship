@@ -31,10 +31,24 @@ class Player:
     received: set[str] = field(default_factory=set)
 
 
+
+@dataclass
+class MatchResult:
+    winner: str
+    loser: str
+    reason: str
+    technical: bool
+
+
 class Arena:
-    def __init__(self, first_url: str, second_url: str):
-        self.players = [Player("player-1", first_url.rstrip("/")), Player("player-2", second_url.rstrip("/"))]
+    def __init__(self, first: Player, second: Player):
+        self.players = [first, second]
         self.client = httpx.AsyncClient(timeout=TIMEOUT_SECONDS)
+
+
+    @classmethod
+    def from_urls(cls, first_url: str, second_url: str, first_name: str = "player-1", second_name: str = "player-2") -> "Arena":
+        return cls(Player(first_name, first_url.rstrip("/")), Player(second_name, second_url.rstrip("/")))
 
     async def request(self, player: Player, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         try:
@@ -97,7 +111,7 @@ class Arena:
                     pass
         await self.client.aclose()
 
-    async def play(self) -> tuple[str, str]:
+    async def play(self) -> MatchResult:
         try:
             for player in self.players:
                 await self.start(player)
@@ -108,19 +122,19 @@ class Arena:
                 result = await self.defend(defender, coordinate)
                 await self.submit_result(attacker, result)
                 if len(defender.received) == 20:
-                    return attacker.name, "all enemy ship cells were hit"
+                    return MatchResult(attacker.name, defender.name, "all enemy ship cells were hit", technical=False)
                 if result == "miss":
                     current = 1 - current
         except TechnicalDefeat as error:
             winner = self.players[1] if error.loser == self.players[0].name else self.players[0]
-            return winner.name, f"technical defeat of {error.loser}: {error.reason}"
+            return MatchResult(winner.name, error.loser, f"technical defeat of {error.loser}: {error.reason}", technical=True)
         finally:
             await self.close_all()
 
 
 async def run(first_url: str, second_url: str) -> None:
-    winner, reason = await Arena(first_url, second_url).play()
-    print(f"Winner: {winner}. Reason: {reason}")
+    result = await Arena.from_urls(first_url, second_url).play()
+    print(f"Winner: {result.winner}. Reason: {result.reason}")
 
 
 if __name__ == "__main__":
