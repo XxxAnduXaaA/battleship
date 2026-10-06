@@ -67,7 +67,9 @@ def db_session():
 
 
 def get_game(session_id: str, db: Session) -> Game:
-    game = db.get(Game, session_id)
+    # with_for_update serializes concurrent requests to the same session (SELECT ... FOR UPDATE),
+    # so read-check-write below can't race across two in-flight requests for the same game.
+    game = db.get(Game, session_id, with_for_update=True)
     if not game:
         raise HTTPException(404, "Game session not found")
     if game.closed:
@@ -132,7 +134,7 @@ def opponent_shot(session_id: str, body: CoordinateRequest, db: Session = Depend
 
 @app.post("/game/{session_id}/close", response_model=StatusResponse)
 def close_game(session_id: str, db: Session = Depends(db_session)):
-    game = db.get(Game, session_id)
+    game = db.get(Game, session_id, with_for_update=True)
     if not game:
         raise HTTPException(404, "Game session not found")
     if game.closed:
