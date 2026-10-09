@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytest
@@ -340,6 +341,42 @@ def test_cannot_close_game_twice(client):
     )
 
     assert second_response.status_code == 400
+
+
+
+def test_concurrent_close_only_one_succeeds(client):
+    session_id, _ = create_game(client)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(client.post, f"/game/{session_id}/close") for _ in range(2)]
+        responses = [future.result() for future in futures]
+
+    # Без блокировки строки в БД обе конкурентные попытки закрытия могут
+    # прочитать closed=False и обе отдать 200 - ровно один раз должно пройти.
+    assert sorted(response.status_code for response in responses) == [200, 400]
+
+
+def test_concurrent_opponent_shots_do_not_lose_state(client):
+    session_id, ships = create_game(client)
+    occupied = {cell for ship in ships for cell in ship["coordinates"]}
+    first, second = [coord for coord in ALL_COORDINATES if coord not in occupied][:2]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(client.post, f"/game/{session_id}/opponent-shot", json={"coordinate": first}),
+            pool.submit(client.post, f"/game/{session_id}/opponent-shot", json={"coordinate": second}),
+        ]
+        responses = [future.result() for future in futures]
+
+    assert all(response.status_code == 200 for response in responses)
+
+    # Если один из двух одновременных выстрелов потерялся (lost update при отсутствии
+    # блокировки строки), повтор по его координате не будет считаться дублем.
+    recheck_first = client.post(f"/game/{session_id}/opponent-shot", json={"coordinate": first})
+    recheck_second = client.post(f"/game/{session_id}/opponent-shot", json={"coordinate": second})
+
+    assert recheck_first.status_code == 400
+    assert recheck_second.status_code == 400
 
 
 def test_cannot_get_shot_after_game_closed(client):

@@ -34,5 +34,18 @@ services:
     ports:
       - "8002:8000"
 
+  # Optional third participant, only here for exercising the tournament runner
+  # (round-robin needs 3+ participants to be interesting) against real containers.
+  service-c:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://battleship:battleship@postgres:5432/battleship
+      SERVICE_NAME: service-c
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8003:8000"
+
 volumes:
   postgres_data:
